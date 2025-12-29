@@ -3,6 +3,7 @@ import random
 import os
 import sys
 import math
+import argparse
 
 import torch
 import torch.nn as nn
@@ -48,6 +49,18 @@ def prepare_state(screen_arr):
     return ret
 
 if __name__ == '__main__':
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Train Snake DQN Agent')
+    parser.add_argument('--gamma', type=float, default=0.99, help='Discount factor (default: 0.99)')
+    parser.add_argument('--frame-count', type=int, default=7008000, help='Total training frames (default: 7008000)')
+    parser.add_argument('--eps-decay-time', type=float, default=0.5, help='Epsilon decay time fraction (default: 0.5)')
+    parser.add_argument('--episode-depth', type=int, default=10000, help='Max steps per episode (default: 10000)')
+    parser.add_argument('--batch-size', type=int, default=32, help='Batch size for training (default: 32)')
+    parser.add_argument('--eps-start', type=float, default=1.0, help='Initial epsilon (default: 1.0)')
+    parser.add_argument('--eps-end', type=float, default=0.05, help='Final epsilon (default: 0.05)')
+    parser.add_argument('--q-targ-update-freq', type=int, default=32000, help='Target network update frequency (default: 32000)')
+    args = parser.parse_args()
+
     #Save/load dirs
     models_dir = './models'
     states_dir = './states'
@@ -59,7 +72,7 @@ if __name__ == '__main__':
         os.mkdir(states_dir)
     if not os.path.exists(logs_dir):
         os.mkdir(logs_dir)
-        
+
     # Initialize TensorBoard writer
     writer = SummaryWriter(log_dir=logs_dir)
 
@@ -109,17 +122,29 @@ if __name__ == '__main__':
         Q.load_state_dict(weights['Q'])
         Q_targ.load_state_dict(weights['Q_targ'])
 
-    #Learn params
-    gamma = 0.99
+    #Learn params (from command line arguments)
+    gamma = args.gamma
 
-    #Hyperparams
-    frame_count = 7008000 #219 target updates
-    eps_decay_time = 0.5
-    episode_depth = 10000
-    batch_size = 32
-    eps_start = 1
-    eps_end = 0.05
-    Q_targ_update_freq = 32000
+    #Hyperparams (from command line arguments)
+    frame_count = args.frame_count
+    eps_decay_time = args.eps_decay_time
+    episode_depth = args.episode_depth
+    batch_size = args.batch_size
+    eps_start = args.eps_start
+    eps_end = args.eps_end
+    Q_targ_update_freq = args.q_targ_update_freq
+
+    # Print hyperparameters
+    print('Hyperparameters:')
+    print(f'  gamma: {gamma}')
+    print(f'  frame_count: {frame_count}')
+    print(f'  eps_decay_time: {eps_decay_time}')
+    print(f'  episode_depth: {episode_depth}')
+    print(f'  batch_size: {batch_size}')
+    print(f'  eps_start: {eps_start}')
+    print(f'  eps_end: {eps_end}')
+    print(f'  Q_targ_update_freq: {Q_targ_update_freq}')
+    print()
 
     #Useful variables
     l = -math.log(eps_end) / (frame_count * eps_decay_time)
