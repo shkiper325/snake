@@ -1,0 +1,322 @@
+import time
+import random
+import os
+import sys
+import math
+
+import torch
+import torch.nn as nn
+
+import numpy as np
+import cv2
+
+from QNet import QNet
+from replay_memory import ReplayMemory
+from env import Env
+import utils
+
+from use_cuda import *
+FloatTensor = torch.cuda.FloatTensor if USE_CUDA else torch.FloatTensor
+BoolTensor = torch.cuda.BoolTensor if USE_CUDA else torch.BoolTensor
+
+if USE_CUDA:
+    print('Using CUDA')
+else:
+    print('Using CPU')
+
+def myzscore(x):
+    mean = np.mean(x)
+    std = np.std(x)
+
+    ret = x - mean
+    if std != 0:
+        ret = ret / std
+
+    return ret
+
+def prepare_state(screen_arr):
+    ret = [cv2.cvtColor(screen, cv2.COLOR_RGB2GRAY) for screen in screen_arr]
+
+    ret = [myzscore(screen.astype(np.float32)) for screen in ret]
+
+    ret = [np.expand_dims(screen, axis=0) for screen in ret]
+    ret = np.concatenate(ret, axis=0)
+
+    ret = np.expand_dims(ret, axis=0)
+
+    return ret
+
+if __name__ == '__main__':
+    #Save/load dirs
+    models_dir = './models'
+    states_dir = './states'
+    
+    if not os.path.exists(models_dir):
+        os.mkdir(models_dir)
+    if not os.path.exists(states_dir):
+        os.mkdir(states_dir)
+
+    #Engine parameters
+    env = Env({
+        'border_width' : 50,
+        'square_size' : 20,
+        'snake_color' : np.array([90, 0, 157]),
+        'food_color' : np.array([255, 0, 0]),
+        'background_color' : np.array([255, 255, 255]),
+        'border_background_color' : np.array([255, 255, 255]),
+        'border_line_color' : np.array([0, 0, 0]),
+        'snake_head_color' : np.array([0, 255, 0]),
+        'border_line_width' : 3,
+        'field_size' : (8, 8),
+        'snake_init_len' : 4,
+        'food_count' : 1,
+        'food_score' : 1,
+        'death_score' : -1,
+        'survive_score' : 0,
+        'torus' : False
+    })
+
+    num_actions = 4
+
+    #Last frames count definition
+    k = 4
+
+    #Initing neural networks and loading previos state, if exists
+    Q = QNet(num_actions=num_actions, k=k)
+    Q_targ = QNet(num_actions=num_actions, k=k)
+
+    prev_state = None
+    if os.listdir(models_dir) == []:
+        print('Cold start')
+
+        Q.apply(utils.init_weights)
+        Q_targ.load_state_dict(Q.state_dict())
+    else:
+        print('Loading weights')
+
+        weights_file_path, state_file_path = utils.find_prev_state_files(models_dir, states_dir)
+
+        weights = torch.load(weights_file_path)
+        prev_state = torch.load(state_file_path)
+
+        Q.load_state_dict(weights['Q'])
+        Q_targ.load_state_dict(weights['Q_targ'])
+
+    #Learn params
+    gamma = 0.99
+
+    #Hyperparams
+    frame_count = 7008000 #219 target updates
+    eps_decay_time = 0.5
+    episode_depth = 10000
+    batch_size = 32
+    eps_start = 1
+    eps_end = 0.05
+    Q_targ_update_freq = 32000
+
+    #Useful variables
+    l = -math.log(eps_end) / (frame_count * eps_decay_time)
+
+    replay_mem = ReplayMemory(max_size=500000, alpha=0.5, eps=0.0) if prev_state is None else prev_state['replay_mem']
+
+    save_freq = frame_count // 100
+
+    #Episode loop
+    curr_eps = eps_start if prev_state is None else prev_state['end_eps']
+
+    episode_num = 0 if prev_state is None else (prev_state['end_episode'] + 1)
+    curr_frame_count = 0 if prev_state is None else prev_state['curr_frame_count']
+
+    #Optimizer init
+    if prev_state is None:
+        optimizer = torch.optim.Adam(Q.parameters(), lr=0.0000625, eps=1.5e-4)
+    else:
+        optimizer = torch.optim.Adam(Q.parameters(), lr=0.0000625, eps=1.5e-4)
+        optimizer.load_state_dict(prev_state['optim'])
+    
+    last_curr_frame_count = curr_frame_count
+    last_time = time.time()
+    avg_speed = None
+
+    while True:
+        if curr_frame_count > frame_count:
+            break
+
+        print()
+        print('===================================================')
+        print('Episode number:', episode_num)
+        print('Frames processed:', round(curr_frame_count / frame_count * 100, 2), '%')
+
+        losses = []
+
+        env.new_game()
+
+        last_frames = [np.full((10, 10, 3), fill_value=255, dtype=np.uint8) for i in range(k - 1)]
+        last_frames.append(env.screenshot())
+
+        curr_state = prepare_state(last_frames)
+
+        for t in range(episode_depth):
+            #
+            # Acting
+            #
+
+            if env.finished():
+                break
+
+            print(t, ' ', end='')
+            sys.stdout.flush()
+
+            Q_out = Q(FloatTensor(curr_state)).data.cpu().numpy()[0]
+
+            # action = None
+            # if random.random() < curr_eps:
+            #     if curr_frame_count <= frame_count // 2:
+            #         action = random.randint(0, num_actions - 1)
+            #     else:
+            #         action = np.argmax(Q_out)
+            # else:
+            #     action = np.argmax(Q_out)
+
+            action = None
+            if random.random() < curr_eps:
+                action = random.randint(0, num_actions - 1)
+            else:
+                action = np.argmax(Q_out)
+
+            reward = env.act(action)
+
+            loss = reward - np.amax(Q_out)
+
+            new_state = None
+            if not env.finished():
+                last_frames = last_frames[1:] + [env.screenshot()]
+                new_state = prepare_state(last_frames)
+
+                Q_out = Q(FloatTensor(new_state)).detach().cpu().numpy()[0]
+                Q_targ_out = Q_targ(FloatTensor(new_state)).detach().cpu().numpy()[0]
+
+                loss += gamma * Q_targ_out[np.argmax(Q_out)]
+
+            loss = abs(loss)
+
+            replay_mem.add_element((curr_state, action, reward, new_state), loss)
+
+            curr_state = new_state
+
+            #
+            #Learning
+            #
+
+            sarses = replay_mem.get_batch(batch_size)
+
+            #Targets
+
+            Q_true = []
+            if any([sars[3] is not None for sars in sarses]):
+                batch = np.concatenate([sars[3] for sars in sarses if sars[3] is not None], axis=0)
+                batch = FloatTensor(batch)
+
+                actions = np.argmax(Q(batch).data.cpu().numpy(), axis=1)
+                Q_targ_out = Q_targ(batch).data.cpu().numpy()
+                Q_true = [Q_targ_out[i][actions[i]] for i in range(Q_targ_out.shape[0])]
+            
+            j = 0
+            Q_true_new = []
+            for i in range(len(sarses)):
+                if sarses[i][3] is None:
+                    Q_true_new.append(0)
+                else:
+                    Q_true_new.append(Q_true[j])
+                    j += 1
+            Q_true = np.array(Q_true_new)
+
+            rs = np.array([sars[2] for sars in sarses])
+            Q_true = rs + gamma * Q_true
+            
+            #Predictions
+
+            batch = np.concatenate([sars[0] for sars in sarses], axis=0)
+            batch = FloatTensor(batch)
+            Q_pred = Q(batch)
+            mask = np.array([utils.dirac_delta(i=sars[1], n=num_actions) for sars in sarses], dtype=bool)
+            mask = BoolTensor(mask)
+            Q_pred = torch.masked_select(Q_pred, mask=mask)
+
+            #Updating replay memory
+
+            replay_mem.update(np.abs(Q_true - Q_pred.detach().cpu().numpy()))
+
+            #Learning
+
+            loss = nn.SmoothL1Loss()(Q_pred, FloatTensor(Q_true))
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            losses.append(float(loss.data.cpu().numpy()))
+
+            #
+            #Updating frame counter
+            #
+
+            curr_frame_count += 1
+
+            if curr_frame_count - last_curr_frame_count >= 500:
+                last_curr_frame_count = curr_frame_count
+                avg_speed = 500 / (time.time() - last_time)
+                last_time = time.time()
+
+            #
+            #Updating eps
+            #
+
+            curr_eps = max(math.exp(-l * curr_frame_count), eps_end)
+
+            #
+            #Updating Q_targ if needed
+            #
+
+            if curr_frame_count % Q_targ_update_freq == 0:
+                print('Updating Q_targ')
+
+                Q_targ.load_state_dict(Q.state_dict())
+
+            #
+            #Saving if needed
+            #
+
+            if curr_frame_count % save_freq == 0:
+                print('Saving model')
+
+                torch.save({
+                    'Q' : Q.state_dict(),
+                    'Q_targ' : Q_targ.state_dict()
+                }, os.path.join(models_dir, str(curr_frame_count)))
+                torch.save({
+                    'replay_mem' : replay_mem,
+                    'end_eps' : curr_eps,
+                    'end_episode' : episode_num,
+                    'curr_frame_count' : curr_frame_count,
+                    'optim' : optimizer.state_dict()
+                }, os.path.join(states_dir, str(curr_frame_count)))
+
+        #
+        #Other info
+        #
+
+        print()
+        print('Average loss:', np.mean(losses))
+        print('Replay memory size:', len(replay_mem))
+        print('Eps:', curr_eps)
+        print('Average speed:', str(avg_speed) + 'it/s')
+
+        #
+        #Episode loop routine
+        #
+
+        episode_num += 1
+
+    print()
+    print('Done!')
