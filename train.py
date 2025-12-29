@@ -6,6 +6,7 @@ import math
 
 import torch
 import torch.nn as nn
+from torch.utils.tensorboard import SummaryWriter
 
 import numpy as np
 import cv2
@@ -50,11 +51,15 @@ if __name__ == '__main__':
     #Save/load dirs
     models_dir = './models'
     states_dir = './states'
-    
+    logs_dir = './runs'
+
     if not os.path.exists(models_dir):
         os.mkdir(models_dir)
     if not os.path.exists(states_dir):
         os.mkdir(states_dir)
+
+    # Initialize TensorBoard writer
+    writer = SummaryWriter(log_dir=logs_dir)
 
     #Engine parameters
     env = Env({
@@ -138,6 +143,10 @@ if __name__ == '__main__':
     last_time = time.time()
     avg_speed = None
 
+    # Track episode stats for TensorBoard
+    episode_food_count = 0
+    episode_frame_count = 0
+
     while True:
         if curr_frame_count > frame_count:
             break
@@ -148,6 +157,8 @@ if __name__ == '__main__':
         print('Frames processed:', round(curr_frame_count / frame_count * 100, 2), '%')
 
         losses = []
+        episode_food_count = 0
+        episode_frame_count = 0
 
         env.new_game()
 
@@ -185,6 +196,11 @@ if __name__ == '__main__':
                 action = np.argmax(Q_out)
 
             reward = env.act(action)
+
+            # Track episode stats
+            episode_frame_count += 1
+            if reward > 0:  # Food eaten
+                episode_food_count += 1
 
             loss = reward - np.amax(Q_out)
 
@@ -306,17 +322,35 @@ if __name__ == '__main__':
         #Other info
         #
 
+        avg_loss = np.mean(losses) if len(losses) > 0 else 0
+        food_per_frame = episode_food_count / episode_frame_count if episode_frame_count > 0 else 0
+
         print()
-        print('Average loss:', np.mean(losses))
+        print('Average loss:', avg_loss)
         print('Replay memory size:', len(replay_mem))
         print('Eps:', curr_eps)
         print('Average speed:', str(avg_speed) + 'it/s')
+        print('Episode food count:', episode_food_count)
+        print('Episode frame count:', episode_frame_count)
+
+        # Log to TensorBoard
+        writer.add_scalar('Training/Loss', avg_loss, curr_frame_count)
+        writer.add_scalar('Training/Epsilon', curr_eps, curr_frame_count)
+        writer.add_scalar('Training/ReplayMemorySize', len(replay_mem), curr_frame_count)
+        writer.add_scalar('Episode/FoodCount', episode_food_count, episode_num)
+        writer.add_scalar('Episode/FrameCount', episode_frame_count, episode_num)
+        writer.add_scalar('Episode/FoodPerFrame', food_per_frame, episode_num)
+        if avg_speed is not None:
+            writer.add_scalar('Performance/Speed_it_per_s', avg_speed, curr_frame_count)
 
         #
         #Episode loop routine
         #
 
         episode_num += 1
+
+    # Close TensorBoard writer
+    writer.close()
 
     print()
     print('Done!')

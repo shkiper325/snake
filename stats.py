@@ -16,6 +16,8 @@ import matplotlib
 matplotlib.use('Agg')
 
 from use_cuda import *
+import torch
+from torch.utils.tensorboard import SummaryWriter
 FloatTensor = torch.cuda.FloatTensor if USE_CUDA else torch.FloatTensor
 
 k = 4
@@ -90,6 +92,9 @@ def play(Q, env):
 if __name__ == '__main__':
     games_count = 500
 
+    # Initialize TensorBoard writer for evaluation
+    writer = SummaryWriter(log_dir='./runs/evaluation')
+
     #Engine init
     env = Env({
         'border_width' : 50,
@@ -145,33 +150,43 @@ if __name__ == '__main__':
         mean_loops_ratio.append(np.mean(loops_ratio))
         mean_ff_ratio.append(np.mean(ff_ratio))
 
-    # plt.close()
-    # plt.figure()
-    # plt.plot(states, mean_frames, 'o')
-    # plt.xlabel('Frames seen')
-    # plt.ylabel('Mean frames count')
-    # plt.savefig('frames.png')
+        # Log to TensorBoard
+        writer.add_scalar('Evaluation/MeanFramesCount', np.mean(frames), state)
+        writer.add_scalar('Evaluation/MeanFoodCount', np.mean(food), state)
+        writer.add_scalar('Evaluation/MeanLoopsRatio', np.mean(loops_ratio), state)
+        writer.add_scalar('Evaluation/MeanFoodPerFrame', np.mean(ff_ratio), state)
 
-    # plt.close()
-    # plt.figure()
-    # plt.plot(states, mean_food, 'r')
-    # plt.xlabel('Frames seen')
-    # plt.ylabel('Mean food count')
-    # plt.savefig('food.png')
+    # Close TensorBoard writer
+    writer.close()
 
-    # plt.close()
-    # plt.figure()
-    # plt.plot(states, mean_loops_ratio, 'g')
-    # plt.xlabel('Frames seen')
-    # plt.ylabel('Mean loops/frames ratio')
-    # plt.savefig('loops.png')
+    # Save matplotlib plots as well
+    plt.close()
+    plt.figure()
+    plt.plot(states, mean_frames, 'o')
+    plt.xlabel('Frames seen')
+    plt.ylabel('Mean frames count')
+    plt.savefig('frames.png')
 
-    # plt.close()
-    # plt.figure()
-    # plt.plot(states, mean_ff_ratio, 'b')
-    # plt.xlabel('Frames seen')
-    # plt.ylabel('Mean food/frames ratio')
-    # plt.savefig('ff_ratio.png')
+    plt.close()
+    plt.figure()
+    plt.plot(states, mean_food, 'r')
+    plt.xlabel('Frames seen')
+    plt.ylabel('Mean food count')
+    plt.savefig('food.png')
+
+    plt.close()
+    plt.figure()
+    plt.plot(states, mean_loops_ratio, 'g')
+    plt.xlabel('Frames seen')
+    plt.ylabel('Mean loops/frames ratio')
+    plt.savefig('loops.png')
+
+    plt.close()
+    plt.figure()
+    plt.plot(states, mean_ff_ratio, 'b')
+    plt.xlabel('Frames seen')
+    plt.ylabel('Mean food/frames ratio')
+    plt.savefig('ff_ratio.png')
 
     out = {
         'states' : states,
