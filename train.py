@@ -57,7 +57,9 @@ if __name__ == '__main__':
         os.mkdir(models_dir)
     if not os.path.exists(states_dir):
         os.mkdir(states_dir)
-
+    if not os.path.exists(logs_dir):
+        os.mkdir(logs_dir)
+        
     # Initialize TensorBoard writer
     writer = SummaryWriter(log_dir=logs_dir)
 
