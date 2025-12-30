@@ -1,7 +1,6 @@
 import time
 import random
 import os
-import sys
 import math
 import argparse
 
@@ -21,10 +20,49 @@ from use_cuda import *
 FloatTensor = torch.cuda.FloatTensor if USE_CUDA else torch.FloatTensor
 BoolTensor = torch.cuda.BoolTensor if USE_CUDA else torch.BoolTensor
 
-if USE_CUDA:
-    print('Using CUDA')
-else:
-    print('Using CPU')
+def format_time(seconds):
+    """Format seconds to human readable string."""
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    elif seconds < 3600:
+        return f"{seconds//60:.0f}m {seconds%60:.0f}s"
+    else:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        return f"{hours:.0f}h {minutes:.0f}m"
+
+def print_header():
+    """Print training header."""
+    print()
+    print("=" * 70)
+    print("  SNAKE DQN TRAINING")
+    print("=" * 70)
+
+def print_config(device, models_dir, states_dir, logs_dir, hparams, env):
+    """Print configuration summary."""
+    print()
+    print(f"  Device:     {device}")
+    print(f"  Models:     {models_dir}")
+    print(f"  States:     {states_dir}")
+    print(f"  Logs:       {logs_dir}")
+    print()
+    print("-" * 70)
+    print("  HYPERPARAMETERS")
+    print("-" * 70)
+    print(f"  gamma={hparams['gamma']:<8} batch_size={hparams['batch_size']:<6} lr={hparams['learning_rate']}")
+    print(f"  eps: {hparams['eps_start']:.2f} -> {hparams['eps_end']:.2f} (decay={hparams['eps_decay_time']})")
+    print(f"  frames={hparams['frame_count']:,}  episode_depth={hparams['episode_depth']:,}")
+    print(f"  Q_targ update every {hparams['Q_targ_update_freq']:,} frames")
+    print()
+    print("-" * 70)
+    print("  ENVIRONMENT")
+    print("-" * 70)
+    print(f"  Field: {env.field_size[0]}x{env.field_size[1]}  Snake: {env.snake_init_len}  Food: {env.food_count}")
+    print(f"  Rewards: food={env.food_score} death={env.death_score} survive={env.survive_score}")
+    print("=" * 70)
+    print()
+
+DEVICE = "CUDA" if USE_CUDA else "CPU"
 
 def myzscore(x):
     mean = np.mean(x)
@@ -66,21 +104,18 @@ if __name__ == '__main__':
     # Set headless mode via environment variable if specified
     if args.headless:
         os.environ['SNAKE_HEADLESS'] = '1'
-        print('Running in HEADLESS mode (no display)')
 
     #Save/load dirs
     if args.out_dir:
-        # Create output directory if it doesn't exist
         if not os.path.exists(args.out_dir):
             os.makedirs(args.out_dir)
         models_dir = os.path.join(args.out_dir, 'models')
         states_dir = os.path.join(args.out_dir, 'states')
-        print(f'Output directory: {args.out_dir}')
     else:
         models_dir = './models'
         states_dir = './states'
 
-    logs_dir = './runs'  # Always shared for all experiments
+    logs_dir = './runs'
 
     if not os.path.exists(models_dir):
         os.makedirs(models_dir)
@@ -123,19 +158,14 @@ if __name__ == '__main__':
     Q_targ = QNet(num_actions=num_actions, k=k)
 
     prev_state = None
-    if os.listdir(models_dir) == []:
-        print('Cold start')
-
+    cold_start = os.listdir(models_dir) == []
+    if cold_start:
         Q.apply(utils.init_weights)
         Q_targ.load_state_dict(Q.state_dict())
     else:
-        print('Loading weights')
-
         weights_file_path, state_file_path = utils.find_prev_state_files(models_dir, states_dir)
-
         weights = torch.load(weights_file_path)
         prev_state = torch.load(state_file_path)
-
         Q.load_state_dict(weights['Q'])
         Q_targ.load_state_dict(weights['Q_targ'])
 
@@ -151,24 +181,7 @@ if __name__ == '__main__':
     eps_end = args.eps_end
     Q_targ_update_freq = args.q_targ_update_freq
 
-    # Print hyperparameters
-    print('Hyperparameters:')
-    print(f'  gamma: {gamma}')
-    print(f'  frame_count: {frame_count}')
-    print(f'  eps_decay_time: {eps_decay_time}')
-    print(f'  episode_depth: {episode_depth}')
-    print(f'  batch_size: {batch_size}')
-    print(f'  eps_start: {eps_start}')
-    print(f'  eps_end: {eps_end}')
-    print(f'  Q_targ_update_freq: {Q_targ_update_freq}')
-    print()
-    print('Directories:')
-    print(f'  models: {models_dir}')
-    print(f'  states: {states_dir}')
-    print(f'  logs: {logs_dir}')
-    print()
-
-    # Log all hyperparameters to TensorBoard
+    # Define all hyperparameters dict
     hparams = {
         'gamma': gamma,
         'frame_count': frame_count,
@@ -184,6 +197,15 @@ if __name__ == '__main__':
         'replay_memory_alpha': 0.5,
         'save_frequency': frame_count // 100,
     }
+
+    # Print beautiful header and config
+    print_header()
+    mode_str = "HEADLESS" if args.headless else "DISPLAY"
+    start_str = "COLD START" if cold_start else f"RESUMING from episode {prev_state['end_episode']}"
+    print(f"  Mode: {mode_str} | {start_str}")
+    print_config(DEVICE, models_dir, states_dir, logs_dir, hparams, env)
+
+    # Log hyperparameters to TensorBoard
 
     # Add text summary with all hyperparameters
     hparam_text = '\n'.join([f'{k}: {v}' for k, v in hparams.items()])
@@ -236,6 +258,7 @@ Output Directories:
     last_curr_frame_count = curr_frame_count
     last_time = time.time()
     avg_speed = None
+    training_start_time = time.time()
 
     # Track episode stats for TensorBoard
     episode_food_count = 0
@@ -249,14 +272,15 @@ Output Directories:
         'final_loss': 0
     }
 
+    # Track best performance
+    best_food = 0
+
+    print("Starting training loop...")
+    print()
+
     while True:
         if curr_frame_count > frame_count:
             break
-
-        print()
-        print('===================================================')
-        print('Episode number:', episode_num)
-        print('Frames processed:', round(curr_frame_count / frame_count * 100, 2), '%')
 
         losses = []
         episode_food_count = 0
@@ -264,7 +288,7 @@ Output Directories:
 
         env.new_game()
 
-        last_frames = [np.full((10, 10, 3), fill_value=255, dtype=np.uint8) for i in range(k - 1)]
+        last_frames = [np.full((10, 10, 3), fill_value=255, dtype=np.uint8) for _ in range(k - 1)]
         last_frames.append(env.screenshot())
 
         curr_state = prepare_state(last_frames)
@@ -276,9 +300,6 @@ Output Directories:
 
             if env.finished():
                 break
-
-            print(t, ' ', end='')
-            sys.stdout.flush()
 
             Q_out = Q(FloatTensor(curr_state)).data.cpu().numpy()[0]
 
@@ -397,8 +418,6 @@ Output Directories:
             #
 
             if curr_frame_count % Q_targ_update_freq == 0:
-                print('Updating Q_targ')
-
                 Q_targ.load_state_dict(Q.state_dict())
 
             #
@@ -406,8 +425,6 @@ Output Directories:
             #
 
             if curr_frame_count % save_freq == 0:
-                print('Saving model')
-
                 torch.save({
                     'Q' : Q.state_dict(),
                     'Q_targ' : Q_targ.state_dict()
@@ -421,19 +438,41 @@ Output Directories:
                 }, os.path.join(states_dir, str(curr_frame_count)))
 
         #
-        #Other info
+        # Episode summary
         #
 
         avg_loss = np.mean(losses) if len(losses) > 0 else 0
         food_per_frame = episode_food_count / episode_frame_count if episode_frame_count > 0 else 0
 
-        print()
-        print('Average loss:', avg_loss)
-        print('Replay memory size:', len(replay_mem))
-        print('Eps:', curr_eps)
-        print('Average speed:', str(avg_speed) + 'it/s')
-        print('Episode food count:', episode_food_count)
-        print('Episode frame count:', episode_frame_count)
+        # Track best performance
+        if episode_food_count > best_food:
+            best_food = episode_food_count
+
+        # Calculate progress and ETA
+        progress = curr_frame_count / frame_count * 100
+        elapsed = time.time() - training_start_time
+        if curr_frame_count > 0:
+            eta = elapsed / curr_frame_count * (frame_count - curr_frame_count)
+        else:
+            eta = 0
+
+        # Build progress bar
+        bar_width = 20
+        filled = int(bar_width * progress / 100)
+        bar = "█" * filled + "░" * (bar_width - filled)
+
+        # Speed string
+        speed_str = f"{avg_speed:.1f} it/s" if avg_speed else "..."
+
+        # Print compact episode summary
+        print(f"[{bar}] {progress:5.1f}% | "
+              f"Ep {episode_num:4d} | "
+              f"Food: {episode_food_count:2d} (best:{best_food:2d}) | "
+              f"Steps: {episode_frame_count:4d} | "
+              f"Loss: {avg_loss:.4f} | "
+              f"ε: {curr_eps:.3f} | "
+              f"{speed_str} | "
+              f"ETA: {format_time(eta)}")
 
         # Log to TensorBoard
         writer.add_scalar('Training/Loss', avg_loss, curr_frame_count)
@@ -451,24 +490,25 @@ Output Directories:
         final_metrics['final_food_per_frame'] = food_per_frame
         final_metrics['final_loss'] = avg_loss
 
-        #
-        #Episode loop routine
-        #
-
         episode_num += 1
 
     # Log final hyperparameters and metrics summary to TensorBoard
-    # This creates a nice comparison table in the HPARAMS tab
-    writer.add_hparams(
-        hparams,
-        final_metrics
-    )
-
-    # Close TensorBoard writer
+    writer.add_hparams(hparams, final_metrics)
     writer.close()
 
+    # Print final summary
+    total_time = time.time() - training_start_time
     print()
-    print('Done!')
-    print(f'Final metrics: food={final_metrics["final_food_count"]}, '
-          f'frames={final_metrics["final_frame_count"]}, '
-          f'efficiency={final_metrics["final_food_per_frame"]:.4f}')
+    print("=" * 70)
+    print("  TRAINING COMPLETE")
+    print("=" * 70)
+    print(f"  Total time:     {format_time(total_time)}")
+    print(f"  Episodes:       {episode_num}")
+    print(f"  Frames:         {curr_frame_count:,}")
+    print(f"  Best food:      {best_food}")
+    print(f"  Final loss:     {final_metrics['final_loss']:.4f}")
+    print(f"  Final epsilon:  {curr_eps:.4f}")
+    print()
+    print(f"  Models saved to: {models_dir}")
+    print(f"  TensorBoard:     tensorboard --logdir={logs_dir}")
+    print("=" * 70)
