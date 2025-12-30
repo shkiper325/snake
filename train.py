@@ -146,6 +146,42 @@ if __name__ == '__main__':
     print(f'  Q_targ_update_freq: {Q_targ_update_freq}')
     print()
 
+    # Log all hyperparameters to TensorBoard
+    hparams = {
+        'gamma': gamma,
+        'frame_count': frame_count,
+        'eps_decay_time': eps_decay_time,
+        'episode_depth': episode_depth,
+        'batch_size': batch_size,
+        'eps_start': eps_start,
+        'eps_end': eps_end,
+        'Q_targ_update_freq': Q_targ_update_freq,
+        'learning_rate': 0.0000625,
+        'optimizer_eps': 1.5e-4,
+        'replay_memory_size': 500000,
+        'replay_memory_alpha': 0.5,
+        'save_frequency': frame_count // 100,
+    }
+
+    # Add text summary with all hyperparameters
+    hparam_text = '\n'.join([f'{k}: {v}' for k, v in hparams.items()])
+    writer.add_text('Hyperparameters/All', hparam_text, 0)
+
+    # Log environment parameters
+    env_params_text = f'''
+Environment Configuration:
+- Field size: {env.field_size[0]}x{env.field_size[1]}
+- Snake initial length: {env.snake_init_len}
+- Food count: {env.food_count}
+- Food score: {env.food_score}
+- Death score: {env.death_score}
+- Survive score: {env.survive_score}
+- Torus mode: {env.torus}
+- Square size: {env.square_size}
+- Border width: {env.border_width}
+'''
+    writer.add_text('Environment/Configuration', env_params_text, 0)
+
     #Useful variables
     l = -math.log(eps_end) / (frame_count * eps_decay_time)
 
@@ -173,6 +209,14 @@ if __name__ == '__main__':
     # Track episode stats for TensorBoard
     episode_food_count = 0
     episode_frame_count = 0
+
+    # Track final metrics for hparams summary
+    final_metrics = {
+        'final_food_count': 0,
+        'final_frame_count': 0,
+        'final_food_per_frame': 0,
+        'final_loss': 0
+    }
 
     while True:
         if curr_frame_count > frame_count:
@@ -370,14 +414,30 @@ if __name__ == '__main__':
         if avg_speed is not None:
             writer.add_scalar('Performance/Speed_it_per_s', avg_speed, curr_frame_count)
 
+        # Update final metrics for hparams summary
+        final_metrics['final_food_count'] = episode_food_count
+        final_metrics['final_frame_count'] = episode_frame_count
+        final_metrics['final_food_per_frame'] = food_per_frame
+        final_metrics['final_loss'] = avg_loss
+
         #
         #Episode loop routine
         #
 
         episode_num += 1
 
+    # Log final hyperparameters and metrics summary to TensorBoard
+    # This creates a nice comparison table in the HPARAMS tab
+    writer.add_hparams(
+        hparams,
+        final_metrics
+    )
+
     # Close TensorBoard writer
     writer.close()
 
     print()
     print('Done!')
+    print(f'Final metrics: food={final_metrics["final_food_count"]}, '
+          f'frames={final_metrics["final_frame_count"]}, '
+          f'efficiency={final_metrics["final_food_per_frame"]:.4f}')
