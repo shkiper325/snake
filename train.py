@@ -60,6 +60,7 @@ if __name__ == '__main__':
     parser.add_argument('--eps-end', type=float, default=0.05, help='Final epsilon (default: 0.05)')
     parser.add_argument('--q-targ-update-freq', type=int, default=32000, help='Target network update frequency (default: 32000)')
     parser.add_argument('--headless', action='store_true', help='Run in headless mode without pygame display (for servers)')
+    parser.add_argument('--out-dir', type=str, default=None, help='Output directory for models and states (default: current directory)')
     args = parser.parse_args()
 
     # Set headless mode via environment variable if specified
@@ -68,16 +69,25 @@ if __name__ == '__main__':
         print('Running in HEADLESS mode (no display)')
 
     #Save/load dirs
-    models_dir = './models'
-    states_dir = './states'
-    logs_dir = './runs'
+    if args.out_dir:
+        # Create output directory if it doesn't exist
+        if not os.path.exists(args.out_dir):
+            os.makedirs(args.out_dir)
+        models_dir = os.path.join(args.out_dir, 'models')
+        states_dir = os.path.join(args.out_dir, 'states')
+        print(f'Output directory: {args.out_dir}')
+    else:
+        models_dir = './models'
+        states_dir = './states'
+
+    logs_dir = './runs'  # Always shared for all experiments
 
     if not os.path.exists(models_dir):
-        os.mkdir(models_dir)
+        os.makedirs(models_dir)
     if not os.path.exists(states_dir):
-        os.mkdir(states_dir)
+        os.makedirs(states_dir)
     if not os.path.exists(logs_dir):
-        os.mkdir(logs_dir)
+        os.makedirs(logs_dir)
 
     # Initialize TensorBoard writer
     writer = SummaryWriter(log_dir=logs_dir)
@@ -152,6 +162,11 @@ if __name__ == '__main__':
     print(f'  eps_end: {eps_end}')
     print(f'  Q_targ_update_freq: {Q_targ_update_freq}')
     print()
+    print('Directories:')
+    print(f'  models: {models_dir}')
+    print(f'  states: {states_dir}')
+    print(f'  logs: {logs_dir}')
+    print()
 
     # Log all hyperparameters to TensorBoard
     hparams = {
@@ -188,6 +203,15 @@ Environment Configuration:
 - Border width: {env.border_width}
 '''
     writer.add_text('Environment/Configuration', env_params_text, 0)
+
+    # Log output directories
+    dirs_text = f'''
+Output Directories:
+- Models: {models_dir}
+- States: {states_dir}
+- Logs: {logs_dir}
+'''
+    writer.add_text('Directories/Paths', dirs_text, 0)
 
     #Useful variables
     l = -math.log(eps_end) / (frame_count * eps_decay_time)
