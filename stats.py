@@ -90,7 +90,21 @@ def play(Q, env):
     return {'food_count' : food_count, 'frame_count' : frame_count, 'loop_count' : loop_count}
 
 if __name__ == '__main__':
-    games_count = 500
+    import argparse
+
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Evaluate Snake DQN Agent')
+    parser.add_argument('--headless', action='store_true', help='Run in headless mode without pygame display (for servers)')
+    parser.add_argument('--games', type=int, default=500, help='Number of games to evaluate per checkpoint (default: 500)')
+    args = parser.parse_args()
+
+    # Set headless mode via environment variable if specified
+    if args.headless:
+        import os
+        os.environ['SNAKE_HEADLESS'] = '1'
+        print('Running in HEADLESS mode (no display)')
+
+    games_count = args.games
 
     # Initialize TensorBoard writer for evaluation
     writer = SummaryWriter(log_dir='./runs/evaluation')
@@ -112,7 +126,8 @@ if __name__ == '__main__':
         'food_score' : 1,
         'death_score' : -1,
         'survive_score' : 0,
-        'torus' : False
+        'torus' : False,
+        'headless' : args.headless
     })
 
     #Load names

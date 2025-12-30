@@ -1,6 +1,12 @@
 import random
 import numpy as np
-import pygame
+import os
+
+# Check if headless mode is enabled
+HEADLESS = os.environ.get('SNAKE_HEADLESS', '0') == '1'
+
+if not HEADLESS:
+    import pygame
 
 class Env(object):
     def __init__(self, params):
@@ -28,25 +34,31 @@ class Env(object):
 
         self.torus = params['torus']
 
+        # Headless mode support
+        self.headless = params.get('headless', HEADLESS)
+
         #Initializing game state
         self.game_finished = True
 
-        #Initializing screen
-        pygame.init()
+        #Initializing screen (only if not headless)
+        if not self.headless:
+            pygame.init()
 
-        self.screen_size = np.array([self.border_width * 2 + self.field_size[0] * self.square_size,
-                self.border_width * 2 + self.field_size[1] * self.square_size])
+            self.screen_size = np.array([self.border_width * 2 + self.field_size[0] * self.square_size,
+                    self.border_width * 2 + self.field_size[1] * self.square_size])
 
-        self.screen = pygame.display.set_mode(self.screen_size)
-        
-        self.screen.fill(self.background_color)
-        pygame.draw.rect(self.screen, self.border_line_color, pygame.Rect(
-            self.border_width - self.border_line_width,
-            self.border_width - self.border_line_width,
-            self.square_size * self.field_size[0] + 2 * self.border_line_width,
-            self.square_size * self.field_size[1] + 2 * self.border_line_width),
-            self.border_line_width
-        )
+            self.screen = pygame.display.set_mode(self.screen_size)
+
+            self.screen.fill(self.background_color)
+            pygame.draw.rect(self.screen, self.border_line_color, pygame.Rect(
+                self.border_width - self.border_line_width,
+                self.border_width - self.border_line_width,
+                self.square_size * self.field_size[0] + 2 * self.border_line_width,
+                self.square_size * self.field_size[1] + 2 * self.border_line_width),
+                self.border_line_width
+            )
+        else:
+            self.screen = None
 
     def generate_food(self):
         while len(self.food) < self.food_count:
@@ -126,7 +138,7 @@ class Env(object):
         return reward
 
     def render(self):
-        if self.rendered:
+        if self.rendered or self.headless:
             return
 
         pygame.draw.rect(self.screen, self.background_color, pygame.Rect(
@@ -161,14 +173,18 @@ class Env(object):
         self.rendered = True
 
     def draw():
-        pygame.display.flip()
+        if not HEADLESS:
+            pygame.display.flip()
     
     def finished(self):
         return self.game_finished
 
     def screenshot(self):
-        self.render()
+        # Render only if not headless
+        if not self.headless:
+            self.render()
 
+        # Generate screenshot from game state (works in both modes)
         ret = []
 
         for y in range(self.field_size[1]):

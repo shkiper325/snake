@@ -59,7 +59,13 @@ if __name__ == '__main__':
     parser.add_argument('--eps-start', type=float, default=1.0, help='Initial epsilon (default: 1.0)')
     parser.add_argument('--eps-end', type=float, default=0.05, help='Final epsilon (default: 0.05)')
     parser.add_argument('--q-targ-update-freq', type=int, default=32000, help='Target network update frequency (default: 32000)')
+    parser.add_argument('--headless', action='store_true', help='Run in headless mode without pygame display (for servers)')
     args = parser.parse_args()
+
+    # Set headless mode via environment variable if specified
+    if args.headless:
+        os.environ['SNAKE_HEADLESS'] = '1'
+        print('Running in HEADLESS mode (no display)')
 
     #Save/load dirs
     models_dir = './models'
@@ -93,7 +99,8 @@ if __name__ == '__main__':
         'food_score' : 1,
         'death_score' : -1,
         'survive_score' : 0,
-        'torus' : False
+        'torus' : False,
+        'headless' : args.headless
     })
 
     num_actions = 4
