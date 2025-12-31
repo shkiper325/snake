@@ -7,7 +7,7 @@ echo "Starting headless training on server..."
 echo ""
 
 # Run training in background with headless mode
-nohup python train.py --headless \
+SNAKE_HEADLESS=1 nohup python train.py --headless \
     --out-dir "div_1" \
     --frame-count 7008000 \
     --batch-size 32 \
@@ -15,7 +15,7 @@ nohup python train.py --headless \
     --q-targ-update-freq 32000 \
     > div_1_train.log 2>&1 &
 
-nohup python train.py --headless \
+SNAKE_HEADLESS=1 nohup python train.py --headless \
     --out-dir "div_10" \
     --frame-count 700800 \
     --batch-size 32 \
@@ -23,7 +23,7 @@ nohup python train.py --headless \
     --q-targ-update-freq 3200 \
     > div_10_train.log 2>&1 &
 
-nohup python train.py --headless \
+SNAKE_HEADLESS=1 nohup python train.py --headless \
     --out-dir "div_5" \
     --frame-count 1401600 \
     --batch-size 32 \
@@ -31,7 +31,7 @@ nohup python train.py --headless \
     --q-targ-update-freq 6400 \
     > div_5_train.log 2>&1 &
 
-nohup python train.py --headless \
+SNAKE_HEADLESS=1 nohup python train.py --headless \
     --out-dir "div_4" \
     --frame-count 1752000 \
     --batch-size 32 \
@@ -39,7 +39,7 @@ nohup python train.py --headless \
     --q-targ-update-freq 8000 \
     > div_4_train.log 2>&1 &
 
-nohup python train.py --headless \
+SNAKE_HEADLESS=1 nohup python train.py --headless \
     --out-dir "div_2" \
     --frame-count 3504000 \
     --batch-size 32 \
