@@ -164,8 +164,8 @@ if __name__ == '__main__':
         Q_targ.load_state_dict(Q.state_dict())
     else:
         weights_file_path, state_file_path = utils.find_prev_state_files(models_dir, states_dir)
-        weights = torch.load(weights_file_path)
-        prev_state = torch.load(state_file_path)
+        weights = torch.load(weights_file_path, weights_only=True)
+        prev_state = torch.load(state_file_path, weights_only=False)
         Q.load_state_dict(weights['Q'])
         Q_targ.load_state_dict(weights['Q_targ'])
 
