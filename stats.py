@@ -95,6 +95,7 @@ if __name__ == '__main__':
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Evaluate Snake DQN Agent')
     parser.add_argument('--headless', action='store_true', help='Run in headless mode without pygame display (for servers)')
+    parser.add_argument('--models-dir', type=str, default=None, help='Directory containing model checkpoints (default: models/)')
     parser.add_argument('--games', type=int, default=500, help='Number of games to evaluate per checkpoint (default: 500)')
     args = parser.parse_args()
 
@@ -131,7 +132,7 @@ if __name__ == '__main__':
     })
 
     #Load names
-    models_dir = 'models/'
+    models_dir = args.models_dir + '/'
 
     states = [int(name) for name in os.listdir(models_dir) if name not in ['state', 'state_bak']]
     states.sort()
