@@ -212,3 +212,4 @@ states/
 runs/
 nohup.out
 */
+*.json
