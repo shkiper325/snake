@@ -53,6 +53,8 @@ def print_config(device, models_dir, states_dir, logs_dir, hparams, env):
     print(f"  eps: {hparams['eps_start']:.2f} -> {hparams['eps_end']:.2f} (decay={hparams['eps_decay_time']})")
     print(f"  frames={hparams['frame_count']:,}  episode_depth={hparams['episode_depth']:,}")
     print(f"  Q_targ update every {hparams['Q_targ_update_freq']:,} frames")
+    if 'alter_loss_lambda' in hparams and hparams['alter_loss_lambda'] > 0:
+        print(f"  AlterNet regularization lambda: {hparams['alter_loss_lambda']}")
     print()
     print("-" * 70)
     print("  ENVIRONMENT")
@@ -86,6 +88,28 @@ def prepare_state(screen_arr):
 
     return ret
 
+def compute_alternet_regularization(Q, AlterNet):
+    """
+    Compute MSE regularization between Q and AlterNet linear layer weights and biases.
+
+    Returns:
+        Average MSE across lin1 and lin2 layers (weights + biases)
+    """
+    lin1_weight = torch.flatten(Q.lin1.weight)
+    alternet_lin1_weight = torch.flatten(AlterNet.lin1.weight)
+    lin1_bias = torch.flatten(Q.lin1.bias)
+    alternet_lin1_bias = torch.flatten(AlterNet.lin1.bias)
+
+    lin2_weight = torch.flatten(Q.lin2.weight)
+    alternet_lin2_weight = torch.flatten(AlterNet.lin2.weight)
+    lin2_bias = torch.flatten(Q.lin2.bias)
+    alternet_lin2_bias = torch.flatten(AlterNet.lin2.bias)
+
+    lin = torch.cat([lin1_weight, lin1_bias, lin2_weight, lin2_bias])
+    alternet_lin = torch.cat([alternet_lin1_weight, alternet_lin1_bias, alternet_lin2_weight, alternet_lin2_bias])
+
+    return torch.exp(-nn.MSELoss(reduction='mean')(lin, alternet_lin))
+
 if __name__ == '__main__':
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Train Snake DQN Agent')
@@ -99,6 +123,8 @@ if __name__ == '__main__':
     parser.add_argument('--q-targ-update-freq', type=int, default=32000, help='Target network update frequency (default: 32000)')
     parser.add_argument('--headless', action='store_true', help='Run in headless mode without pygame display (for servers)')
     parser.add_argument('--out-dir', type=str, default=None, help='Output directory for models and states (default: current directory)')
+    parser.add_argument('--alter-net', type=str, default=None, help='Path to alternative QNet model file to load before training')
+    parser.add_argument('--alter-loss-lambda', type=float, default=1.0, help='Weight for AlterNet MSE regularization loss (default: 1.0)')
     args = parser.parse_args()
 
     # Set headless mode via environment variable if specified
@@ -169,6 +195,28 @@ if __name__ == '__main__':
         Q.load_state_dict(weights['Q'])
         Q_targ.load_state_dict(weights['Q_targ'])
 
+    # Load alternative network if specified
+    AlterNet = None
+    if args.alter_net:
+        try:
+            AlterNet = QNet(num_actions=num_actions, k=k)
+            alter_weights = torch.load(args.alter_net, weights_only=True)
+            # Handle both dict with 'Q' key and direct state dict
+            if isinstance(alter_weights, dict) and 'Q' in alter_weights:
+                AlterNet.load_state_dict(alter_weights['Q'])
+            elif isinstance(alter_weights, dict) and 'Q_targ' in alter_weights:
+                AlterNet.load_state_dict(alter_weights['Q_targ'])
+            else:
+                AlterNet.load_state_dict(alter_weights)
+
+            if USE_CUDA:
+                AlterNet = AlterNet.cuda()
+            AlterNet.eval()  # Set to evaluation mode
+            print(f"Loaded AlterNet from: {args.alter_net}")
+        except Exception as e:
+            print(f"Warning: Failed to load AlterNet from {args.alter_net}: {e}")
+            AlterNet = None
+
     #Learn params (from command line arguments)
     gamma = args.gamma
 
@@ -180,6 +228,7 @@ if __name__ == '__main__':
     eps_start = args.eps_start
     eps_end = args.eps_end
     Q_targ_update_freq = args.q_targ_update_freq
+    alter_loss_lambda = args.alter_loss_lambda
 
     # Define all hyperparameters dict
     hparams = {
@@ -191,6 +240,7 @@ if __name__ == '__main__':
         'eps_start': eps_start,
         'eps_end': eps_end,
         'Q_targ_update_freq': Q_targ_update_freq,
+        'alter_loss_lambda': alter_loss_lambda if AlterNet is not None else 0.0,
         'learning_rate': 0.0000625,
         'optimizer_eps': 1.5e-4,
         'replay_memory_size': 500000,
@@ -202,7 +252,8 @@ if __name__ == '__main__':
     print_header()
     mode_str = "HEADLESS" if args.headless else "DISPLAY"
     start_str = "COLD START" if cold_start else f"RESUMING from episode {prev_state['end_episode']}"
-    print(f"  Mode: {mode_str} | {start_str}")
+    alter_str = f" | AlterNet: {args.alter_net}" if AlterNet is not None else ""
+    print(f"  Mode: {mode_str} | {start_str}{alter_str}")
     print_config(DEVICE, models_dir, states_dir, logs_dir, hparams, env)
 
     # Log hyperparameters to TensorBoard
@@ -213,27 +264,37 @@ if __name__ == '__main__':
 
     # Log environment parameters
     env_params_text = f'''
-Environment Configuration:
-- Field size: {env.field_size[0]}x{env.field_size[1]}
-- Snake initial length: {env.snake_init_len}
-- Food count: {env.food_count}
-- Food score: {env.food_score}
-- Death score: {env.death_score}
-- Survive score: {env.survive_score}
-- Torus mode: {env.torus}
-- Square size: {env.square_size}
-- Border width: {env.border_width}
-'''
+                    Environment Configuration:
+                    - Field size: {env.field_size[0]}x{env.field_size[1]}
+                    - Snake initial length: {env.snake_init_len}
+                    - Food count: {env.food_count}
+                    - Food score: {env.food_score}
+                    - Death score: {env.death_score}
+                    - Survive score: {env.survive_score}
+                    - Torus mode: {env.torus}
+                    - Square size: {env.square_size}
+                    - Border width: {env.border_width}
+                    '''
     writer.add_text('Environment/Configuration', env_params_text, 0)
 
     # Log output directories
     dirs_text = f'''
-Output Directories:
-- Models: {models_dir}
-- States: {states_dir}
-- Logs: {logs_dir}
-'''
+                    Output Directories:
+                    - Models: {models_dir}
+                    - States: {states_dir}
+                    - Logs: {logs_dir}
+                    '''
     writer.add_text('Directories/Paths', dirs_text, 0)
+
+    # Log AlterNet info if loaded
+    if AlterNet is not None:
+        alternet_text = f'''
+                    AlterNet Configuration:
+                    - Loaded from: {args.alter_net}
+                    - Status: Active
+                    - Mode: Evaluation only
+                    '''
+        writer.add_text('AlterNet/Configuration', alternet_text, 0)
 
     #Useful variables
     l = -math.log(eps_end) / (frame_count * eps_decay_time)
@@ -388,13 +449,27 @@ Output Directories:
 
             #Learning
 
-            loss = nn.SmoothL1Loss()(Q_pred, FloatTensor(Q_true))
+            # Compute base DQN loss
+            dqn_loss = nn.SmoothL1Loss()(Q_pred, FloatTensor(Q_true))
+
+            # Add AlterNet regularization if available
+            if AlterNet is not None:
+                alternet_reg = compute_alternet_regularization(Q, AlterNet)
+                loss = dqn_loss + alter_loss_lambda * alternet_reg
+            else:
+                loss = dqn_loss
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             losses.append(float(loss.data.cpu().numpy()))
+
+            # Track loss components for TensorBoard
+            if AlterNet is not None and curr_frame_count % 100 == 0:
+                with torch.no_grad():
+                    writer.add_scalar('Training/DQN_Loss', float(dqn_loss.cpu().numpy()), curr_frame_count)
+                    writer.add_scalar('Training/AlterNet_Regularization', float(alternet_reg.cpu().numpy()), curr_frame_count)
 
             #
             #Updating frame counter
