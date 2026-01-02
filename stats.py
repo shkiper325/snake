@@ -85,6 +85,9 @@ def play(Q, env):
 
         last_frames = last_frames[1:] + [env.screenshot()]
 
+        env.render()
+        Env.draw()
+
     #Return
     
     return {'food_count' : food_count, 'frame_count' : frame_count, 'loop_count' : loop_count}
@@ -153,7 +156,7 @@ if __name__ == '__main__':
         loops_ratio = []
         ff_ratio = []
 
-        for i in range(games_count):
+        for i in tqdm(range(games_count)):
             res = play(Q, env)
 
             frames.append(res['frame_count'])
