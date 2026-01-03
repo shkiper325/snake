@@ -125,6 +125,7 @@ if __name__ == '__main__':
     parser.add_argument('--out-dir', type=str, default=None, help='Output directory for models and states (default: current directory)')
     parser.add_argument('--alter-net', type=str, default=None, help='Path to alternative QNet model file to load before training')
     parser.add_argument('--alter-loss-lambda', type=float, default=1.0, help='Weight for AlterNet MSE regularization loss (default: 1.0)')
+    parser.add_argument('--alter-only-fc', action='store_true', help='Only train FC layers, freeze CNN layers initialized from AlterNet')
     args = parser.parse_args()
 
     # Set headless mode via environment variable if specified
@@ -213,9 +214,30 @@ if __name__ == '__main__':
                 AlterNet = AlterNet.cuda()
             AlterNet.eval()  # Set to evaluation mode
             print(f"Loaded AlterNet from: {args.alter_net}")
+
+            # If alter-only-fc, copy CNN layers from AlterNet and freeze them
+            if args.alter_only_fc:
+                # Copy CNN layers from AlterNet to Q
+                Q.conv1.load_state_dict(AlterNet.conv1.state_dict())
+                Q.conv2.load_state_dict(AlterNet.conv2.state_dict())
+                # Also copy to Q_targ
+                Q_targ.conv1.load_state_dict(AlterNet.conv1.state_dict())
+                Q_targ.conv2.load_state_dict(AlterNet.conv2.state_dict())
+                # Freeze CNN layers (disable gradients)
+                for param in Q.conv1.parameters():
+                    param.requires_grad = False
+                for param in Q.conv2.parameters():
+                    param.requires_grad = False
+                print("[AlterNet] CNN layers copied from AlterNet and frozen. Only FC layers will be trained.")
+
         except Exception as e:
             print(f"Warning: Failed to load AlterNet from {args.alter_net}: {e}")
             AlterNet = None
+
+    # Validate alter-only-fc requires alter-net
+    if args.alter_only_fc and AlterNet is None:
+        print("Error: --alter-only-fc requires --alter-net to be specified and loaded successfully")
+        exit(1)
 
     #Learn params (from command line arguments)
     gamma = args.gamma
@@ -241,6 +263,7 @@ if __name__ == '__main__':
         'eps_end': eps_end,
         'Q_targ_update_freq': Q_targ_update_freq,
         'alter_loss_lambda': alter_loss_lambda if AlterNet is not None else 0.0,
+        'alter_only_fc': args.alter_only_fc,
         'learning_rate': 0.0000625,
         'optimizer_eps': 1.5e-4,
         'replay_memory_size': 500000,
@@ -253,7 +276,8 @@ if __name__ == '__main__':
     mode_str = "HEADLESS" if args.headless else "DISPLAY"
     start_str = "COLD START" if cold_start else f"RESUMING from episode {prev_state['end_episode']}"
     alter_str = f" | AlterNet: {args.alter_net}" if AlterNet is not None else ""
-    print(f"  Mode: {mode_str} | {start_str}{alter_str}")
+    fc_only_str = " (FC only)" if args.alter_only_fc else ""
+    print(f"  Mode: {mode_str} | {start_str}{alter_str}{fc_only_str}")
     print_config(DEVICE, models_dir, states_dir, logs_dir, hparams, env)
 
     # Log hyperparameters to TensorBoard
@@ -310,10 +334,16 @@ if __name__ == '__main__':
     curr_frame_count = 0 if prev_state is None else prev_state['curr_frame_count']
 
     #Optimizer init
-    if prev_state is None:
-        optimizer = torch.optim.Adam(Q.parameters(), lr=0.0000625, eps=1.5e-4)
+    # Select parameters to optimize (only FC layers if alter-only-fc is enabled)
+    if args.alter_only_fc:
+        train_params = list(Q.lin1.parameters()) + list(Q.lin2.parameters())
     else:
-        optimizer = torch.optim.Adam(Q.parameters(), lr=0.0000625, eps=1.5e-4)
+        train_params = Q.parameters()
+
+    if prev_state is None:
+        optimizer = torch.optim.Adam(train_params, lr=0.0000625, eps=1.5e-4)
+    else:
+        optimizer = torch.optim.Adam(train_params, lr=0.0000625, eps=1.5e-4)
         optimizer.load_state_dict(prev_state['optim'])
     
     last_curr_frame_count = curr_frame_count
