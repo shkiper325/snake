@@ -40,6 +40,10 @@ class Env(object):
         #Initializing game state
         self.game_finished = True
 
+        # Editor state
+        self.paused = False
+        self.pending_action = None
+
         #Initializing screen (only if not headless)
         if not self.headless:
             pygame.init()
@@ -70,6 +74,82 @@ class Env(object):
             else:
                 self.food.append([x, y])
 
+    def screen_to_field(self, screen_x, screen_y):
+        """Convert screen coordinates to field coordinates."""
+        field_x = (screen_x - self.border_width) // self.square_size
+        field_y = (screen_y - self.border_width) // self.square_size
+        return int(field_x), int(field_y)
+
+    def is_valid_field_pos(self, x, y):
+        """Check if field position is within bounds."""
+        return 0 <= x < self.field_size[0] and 0 <= y < self.field_size[1]
+
+    def handle_editor_events(self):
+        """Handle editor input events. Returns True if should continue waiting, False to resume game."""
+        if self.headless:
+            return False
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return False
+
+            if event.type == pygame.KEYDOWN:
+                # Space toggles pause
+                if event.key == pygame.K_SPACE:
+                    self.paused = not self.paused
+                    if self.paused:
+                        print("[EDITOR] Paused - entering edit mode")
+                    else:
+                        print("[EDITOR] Resumed - continuing simulation")
+                    return self.paused
+
+                # WASD changes pending action (only in pause mode)
+                if self.paused:
+                    if event.key == pygame.K_d:
+                        self.pending_action = 0
+                        print("[EDITOR] Action override: RIGHT (0)")
+                    elif event.key == pygame.K_w:
+                        self.pending_action = 1
+                        print("[EDITOR] Action override: UP (1)")
+                    elif event.key == pygame.K_a:
+                        self.pending_action = 2
+                        print("[EDITOR] Action override: LEFT (2)")
+                    elif event.key == pygame.K_s:
+                        self.pending_action = 3
+                        print("[EDITOR] Action override: DOWN (3)")
+
+            if event.type == pygame.MOUSEBUTTONDOWN and self.paused:
+                mouse_x, mouse_y = pygame.mouse.get_pos()
+                field_x, field_y = self.screen_to_field(mouse_x, mouse_y)
+
+                if not self.is_valid_field_pos(field_x, field_y):
+                    print(f"[EDITOR] Click outside field: screen({mouse_x}, {mouse_y})")
+                    continue
+
+                pos = [field_x, field_y]
+
+                # Left click: toggle food
+                if event.button == 1:
+                    if pos in self.food:
+                        self.food.remove(pos)
+                        print(f"[EDITOR] Removed food at ({field_x}, {field_y})")
+                    else:
+                        self.food.append(pos)
+                        print(f"[EDITOR] Added food at ({field_x}, {field_y})")
+                    self.rendered = False
+
+                # Right click: toggle snake segment
+                elif event.button == 3:
+                    if pos in self.snake:
+                        self.snake.remove(pos)
+                        print(f"[EDITOR] Removed snake segment at ({field_x}, {field_y}), snake length: {len(self.snake)}")
+                    else:
+                        self.snake.insert(0, pos)
+                        print(f"[EDITOR] Added snake segment at ({field_x}, {field_y}) (inserted at head), snake length: {len(self.snake)}")
+                    self.rendered = False
+
+        return self.paused
+
     def new_game(self):
         self.snake = [[i, self.field_size[1] // 2] for i in range(self.snake_init_len)]
 
@@ -87,6 +167,24 @@ class Env(object):
     def act(self, action=None):
         if self.game_finished:
             return
+
+        # Handle editor pause mode - wait for user input before continuing
+        if not self.headless:
+            # Check for pause toggle before processing
+            self.handle_editor_events()
+
+            # If paused, enter edit loop
+            while self.paused:
+                self.render()
+                Env.draw()
+                self.handle_editor_events()
+                pygame.time.wait(50)  # Prevent busy loop
+
+            # Use pending action if set (from WASD keys)
+            if self.pending_action is not None:
+                print(f"[EDITOR] Using overridden action: {self.pending_action}")
+                action = self.pending_action
+                self.pending_action = None
 
         if action is not None:
             if self.direction % 2 != action % 2: #Check for incompatible action
