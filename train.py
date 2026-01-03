@@ -137,11 +137,11 @@ if __name__ == '__main__':
             os.makedirs(args.out_dir)
         models_dir = os.path.join(args.out_dir, 'models')
         states_dir = os.path.join(args.out_dir, 'states')
+        logs_dir = os.path.join(args.out_dir, 'runs')
     else:
         models_dir = './models'
         states_dir = './states'
-
-    logs_dir = './runs'
+        logs_dir = './runs'
 
     if not os.path.exists(models_dir):
         os.makedirs(models_dir)
